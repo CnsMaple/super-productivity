@@ -1,0 +1,70 @@
+services:
+  supersync:
+    build:
+      context: .
+      dockerfile: packages/super-sync-server/Dockerfile.supersync_only
+    volumes:
+      - ./supersync-data/supersync:/data
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    environment:
+      # - TEST_MODE=true
+      # - TEST_MODE_CONFIRM=yes-i-understand-the-risks
+      - DATA_DIR=${DATA_DIR}
+      - NODE_ENV=${NODE_ENV:-production}
+      - PORT=1900
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-supersync}:${POSTGRES_PASSWORD}@supersync_db:5432/${POSTGRES_DB:-supersync_db}
+      - JWT_SECRET=${JWT_SECRET}
+      - PUBLIC_URL=${PUBLIC_URL:-http://localhost:1900}
+      - CORS_ORIGINS=${CORS_ORIGINS:-https://app.super-productivity.com}
+      - SMTP_HOST=${SMTP_HOST:-}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_SECURE=${SMTP_SECURE:-false}
+      - SMTP_USER=${SMTP_USER:-}
+      - SMTP_PASS=${SMTP_PASS:-}
+      - SMTP_FROM=${SMTP_FROM:-}
+      - WEBAUTHN_RP_ID=${WEBAUTHN_RP_ID:-localhost}
+      - WEBAUTHN_RP_NAME=${WEBAUTHN_RP_NAME:-Super Productivity Sync}
+      - WEBAUTHN_ORIGIN=${WEBAUTHN_ORIGIN:-http://localhost:1900}
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'wget',
+          '--quiet',
+          '--tries=1',
+          '--spider',
+          'http://127.0.0.1:1900/health',
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      supersync_db:
+        condition: service_healthy
+    networks:
+      - caddy_net
+
+  supersync_db:
+    image: postgres:16-alpine
+    container_name: postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-supersync}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB:-supersync_db}
+    volumes:
+      - ./supersync-data/postgres:/var/lib/postgresql
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U supersync -d supersync_db']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - caddy_net
+networks:
+  caddy_net:
+    external: true
