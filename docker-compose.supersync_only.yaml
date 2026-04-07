@@ -1,3 +1,5 @@
+# sudo docker compose -f docker-compose.supersync_only.yaml down -v && sudo docker compose -f docker-compose.supersync_only.yaml up -d --build
+
 services:
   supersync:
     build:
