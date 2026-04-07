@@ -70,6 +70,6 @@ ENV DATA_DIR=/app/data
 HEALTHCHECK --interval=30s --timeout=5s --start-period=30s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://localhost:${PORT}/health || exit 1
 
-# CMD ["sh", "-c", "npx prisma migrate deploy && node dist/src/index.js"]
-CMD ["sh", "-c", "npx prisma db push && node dist/src/index.js"]
-# CMD ["sh", "-c", "npx prisma db push && npx prisma migrate deploy && node dist/src/index.js"]
+# 初次启动，需要先build后面的镜像运行(需要看情况动态更新，因为push一次就是最新的表结构)，然后不用down -v，使用down即可，保持数据库的库表，然后开启上面这个命令，重新build这个镜像。
+CMD ["sh", "-c", "npx prisma migrate deploy && node dist/src/index.js"]
+# CMD ["sh", "-c", "npx prisma db push && npx prisma migrate resolve --applied 20251212000000_add_is_payload_encrypted && npx prisma migrate resolve --applied 20251218000000_add_storage_quota && npx prisma migrate resolve --applied 20251228000000_remove_parent_op_id && npx prisma migrate resolve --applied 20251228000001_remove_tombstones && npx prisma migrate resolve --applied 20251231000000_add_password_reset_token && npx prisma migrate resolve --applied 20260102000000_add_passkey_support && npx prisma migrate resolve --applied 20260103000000_add_optype_index && npx prisma migrate resolve --applied 20260329000000_add_sync_import_reason && npx prisma migrate deploy && node dist/src/index.js"]
