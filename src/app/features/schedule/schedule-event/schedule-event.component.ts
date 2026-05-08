@@ -1,12 +1,16 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  AfterViewInit,
   computed,
   ElementRef,
   inject,
   input,
+  NgZone,
+  OnDestroy,
   signal,
   viewChild,
+  viewChildren,
 } from '@angular/core';
 import { hasLinkHints, RenderLinksPipe } from '../../../ui/pipes/render-links.pipe';
 import { CdkDrag } from '@angular/cdk/drag-drop';
@@ -60,7 +64,8 @@ const FIVE_MINUTES_IN_MS = 5 * 60 * 1000;
     '[title]': 'hoverTitle()',
     '[class]': 'cssClass()',
     '[style]': 'style()',
-    '[style.--project-color]': 'projectColor()',
+    '[style.--title-line-clamp]': '_titleLineClamp()',
+    '[style.--project-color]': 'calEventColor() || projectColor()',
     '[style.height]': '_resizeHeight()',
     '(click)': 'clickHandler($event)',
     '(contextmenu)': 'onContextMenu($event)',
@@ -74,13 +79,14 @@ const FIVE_MINUTES_IN_MS = 5 * 60 * 1000;
     },
   ],
 })
-export class ScheduleEventComponent {
+export class ScheduleEventComponent implements AfterViewInit, OnDestroy {
   private _store = inject(Store);
   private _elRef = inject(ElementRef);
   private _matDialog = inject(MatDialog);
   private _dateTimeFormatService = inject(DateTimeFormatService);
   private _taskService = inject(TaskService);
   private _calEventActions = inject(CalendarEventActionsService);
+  private _ngZone = inject(NgZone);
   readonly titleHasLinks = computed(() => {
     const t = this.title();
     return !!t && hasLinkHints(t);
@@ -102,9 +108,14 @@ export class ScheduleEventComponent {
   });
 
   readonly calMenuTrigger = viewChild('calMenuTrigger', { read: MatMenuTrigger });
+  private readonly _calMenuItems = viewChildren(MatMenuItem);
+  private readonly _titleEl = viewChild<ElementRef<HTMLElement>>('titleEl');
 
   protected readonly SVEType = SVEType;
   private _isBeingSubmitted = false;
+  private _resizeObserver?: ResizeObserver;
+  private _measureRafId?: number;
+  readonly _titleLineClamp = signal(1);
 
   // Computed signals for derived state
   readonly se = computed(() => this.event());
@@ -207,6 +218,10 @@ export class ScheduleEventComponent {
       addClass += ' is-resizing';
     }
 
+    if (this.isReferenceCalendar()) {
+      addClass += ' is-reference-calendar';
+    }
+
     return evt.type + '  ' + addClass;
   });
 
@@ -226,20 +241,79 @@ export class ScheduleEventComponent {
     );
   });
 
+  ngAfterViewInit(): void {
+    const hostEl = this._elRef.nativeElement as HTMLElement;
+    const titleEl = this._titleEl()?.nativeElement;
+    if (!titleEl) {
+      return;
+    }
+
+    this._ngZone.runOutsideAngular(() => {
+      this._resizeObserver = new ResizeObserver(() =>
+        this._scheduleTitleLineClampUpdate(),
+      );
+      this._resizeObserver.observe(hostEl);
+      this._scheduleTitleLineClampUpdate();
+    });
+  }
+
+  ngOnDestroy(): void {
+    if (this._measureRafId !== undefined) {
+      cancelAnimationFrame(this._measureRafId);
+    }
+    this._resizeObserver?.disconnect();
+  }
+
+  private _scheduleTitleLineClampUpdate(): void {
+    if (this._measureRafId !== undefined) {
+      return;
+    }
+
+    this._measureRafId = requestAnimationFrame(() => {
+      this._measureRafId = undefined;
+      this._updateTitleLineClamp();
+    });
+  }
+
+  private _updateTitleLineClamp(): void {
+    const hostEl = this._elRef.nativeElement as HTMLElement;
+    const titleEl = this._titleEl()?.nativeElement;
+    if (!titleEl) {
+      return;
+    }
+
+    const styles = getComputedStyle(titleEl);
+    const lineHeight = parseFloat(styles.lineHeight);
+    const paddingTop = parseFloat(styles.paddingTop);
+    const paddingBottom = parseFloat(styles.paddingBottom);
+    const availableTitleHeight = hostEl.clientHeight - paddingTop - paddingBottom;
+    const lineClamp = Math.max(1, Math.floor(availableTitleHeight / lineHeight));
+
+    if (Number.isFinite(lineClamp) && lineClamp !== this._titleLineClamp()) {
+      this._ngZone.run(() => this._titleLineClamp.set(lineClamp));
+    }
+  }
+
   private readonly _projectId = computed(() => this.task()?.projectId || null);
 
   readonly projectColor = computed(() => {
     const projectId = this._projectId();
-    if (!projectId) return '';
+    if (!projectId) return null;
     // Use store.select and convert to immediate value
-    let color = '';
+    let color: string | null = null;
     this._store
       .select(selectProjectById, { id: projectId })
       .pipe(first())
       .subscribe((project) => {
-        color = project?.theme?.primary || '';
+        color = project?.theme?.primary || null;
       });
     return color;
+  });
+
+  readonly calEventColor = computed(() => {
+    const evt = this.se();
+    if (evt.type !== SVEType.CalendarEvent) return null;
+    return (evt.data as ScheduleFromCalendarEvent).color || null;
   });
 
   readonly elementId = computed(() => {
@@ -307,7 +381,9 @@ export class ScheduleEventComponent {
         },
       });
     } else if (evt.type === SVEType.CalendarEvent) {
-      this.calMenuTrigger()?.openMenu();
+      if (this._calMenuItems().length) {
+        this.calMenuTrigger()?.openMenu();
+      }
     }
   }
 
@@ -315,6 +391,12 @@ export class ScheduleEventComponent {
     const evt = this.se();
     if (evt.type !== SVEType.CalendarEvent) return false;
     return this._calEventActions.isPluginEvent(evt.data as ScheduleFromCalendarEvent);
+  });
+
+  readonly isReferenceCalendar = computed(() => {
+    const evt = this.se();
+    if (evt.type !== SVEType.CalendarEvent) return false;
+    return !!(evt.data as ScheduleFromCalendarEvent).isReferenceCalendar;
   });
 
   async openCalendarEventLink(): Promise<void> {

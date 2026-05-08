@@ -5,9 +5,11 @@ import { CalendarIntegrationEvent } from '../../../calendar-integration/calendar
 export interface CalendarProviderCfg extends BaseIssueProviderCfg {
   icalUrl: string;
   isAutoImportForCurrentDay: boolean;
+  isReferenceCalendar?: boolean;
+  color?: string;
   icon?: string;
   checkUpdatesEvery: number;
-  showBannerBeforeThreshold: null | number;
+  showBannerBeforeThreshold: number | null | undefined;
   isDisabledForWebApp?: boolean;
 }
 

@@ -18,21 +18,23 @@ import { TaskService } from '../task.service';
 import { EMPTY, forkJoin, Subscription } from 'rxjs';
 import {
   HideSubTasksMode,
+  SubmitTrigger,
   TaskCopy,
   TaskDetailTargetPanel,
   TaskWithSubTasks,
 } from '../task.model';
 import { MatDialog } from '@angular/material/dialog';
 import { DialogTimeEstimateComponent } from '../dialog-time-estimate/dialog-time-estimate.component';
-import {
-  expandAnimation,
-  expandInOnlyAnimation,
-} from '../../../ui/animations/expand.ani';
+import { expandInOnlyAnimation } from '../../../ui/animations/expand.ani';
 import { GlobalConfigService } from '../../config/global-config.service';
 import { concatMap, first, tap } from 'rxjs/operators';
-import { fadeAnimation } from '../../../ui/animations/fade.ani';
 import { DoneToggleComponent } from '../../../ui/done-toggle/done-toggle.component';
 import { SwipeBlockComponent } from '../../../ui/swipe-block/swipe-block.component';
+import {
+  CollapsibleComponent,
+  GROUP_NAV_SELECTOR,
+} from '../../../ui/collapsible/collapsible.component';
+import { findAdjacentFocusable } from '../../../util/find-adjacent-focusable';
 import { TaskAttachmentService } from '../task-attachment/task-attachment.service';
 import { DialogEditTaskAttachmentComponent } from '../task-attachment/dialog-edit-attachment/dialog-edit-task-attachment.component';
 import { ProjectService } from '../../project/project.service';
@@ -60,6 +62,7 @@ import { KeyboardConfig } from '../../config/keyboard-config.model';
 import { DialogScheduleTaskComponent } from '../../planner/dialog-schedule-task/dialog-schedule-task.component';
 import { DialogDeadlineComponent } from '../dialog-deadline/dialog-deadline.component';
 import { isDeadlineOverdue as isDeadlineOverdueFn } from '../util/is-deadline-overdue';
+import { isDeadlineApproaching as isDeadlineApproachingFn } from '../util/is-deadline-approaching';
 import { TaskContextMenuComponent } from '../task-context-menu/task-context-menu.component';
 import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { ICAL_TYPE } from '../../issue/issue.const';
@@ -90,10 +93,11 @@ import { TaskFocusService } from '../task-focus.service';
   templateUrl: './task.component.html',
   styleUrls: ['./task.component.scss'],
   changeDetection: ChangeDetectionStrategy.OnPush,
-  animations: [expandAnimation, fadeAnimation, expandInOnlyAnimation],
+  animations: [expandInOnlyAnimation],
   /* eslint-disable @typescript-eslint/naming-convention*/
   host: {
     '[id]': 'taskIdWithPrefix()',
+    '[attr.data-task-id]': 'task().id',
     '[tabindex]': '1',
     '[class.isDone]': 'task().isDone',
     '[class.isCurrent]': 'isCurrent()',
@@ -248,6 +252,13 @@ export class TaskComponent implements OnDestroy, AfterViewInit {
     isDeadlineOverdueFn(this.task(), this.globalTrackingIntervalService.todayDateStr()),
   );
 
+  isDeadlineApproaching = computed(() =>
+    isDeadlineApproachingFn(
+      this.task(),
+      this.globalTrackingIntervalService.todayDateStr(),
+    ),
+  );
+
   hasDeadline = computed(() => {
     const t = this.task();
     return !!(t.deadlineDay || t.deadlineWithTime);
@@ -314,7 +325,12 @@ export class TaskComponent implements OnDestroy, AfterViewInit {
 
   // methods come last
 
-  @HostListener('focus') onFocus(): void {
+  @HostListener('focusin', ['$event']) onFocus(ev: FocusEvent): void {
+    // focusin bubbles, so events from nested <task> elements (subtasks) reach
+    // every ancestor task host. Only the innermost task should claim focus.
+    if (!this._isInnermostTaskFor(ev.target)) {
+      return;
+    }
     this._taskFocusService.focusedTaskId.set(this.task().id);
     this._taskFocusService.lastFocusedTaskComponent.set(this);
 
@@ -329,8 +345,24 @@ export class TaskComponent implements OnDestroy, AfterViewInit {
     }
   }
 
-  @HostListener('blur') onBlur(): void {
+  @HostListener('focusout', ['$event']) onBlur(ev: FocusEvent): void {
+    if (!this._isInnermostTaskFor(ev.target)) {
+      return;
+    }
+    if (
+      ev.relatedTarget instanceof Node &&
+      this._elementRef.nativeElement.contains(ev.relatedTarget)
+    ) {
+      return;
+    }
     this._taskFocusService.focusedTaskId.set(null);
+  }
+
+  private _isInnermostTaskFor(target: EventTarget | null): boolean {
+    return (
+      target instanceof Element &&
+      target.closest('task') === this._elementRef.nativeElement
+    );
   }
 
   @HostListener('dragenter', ['$event']) onDragEnter(ev: DragEvent): void {
@@ -385,7 +417,7 @@ export class TaskComponent implements OnDestroy, AfterViewInit {
       setTimeout(() => {
         // when there are multiple instances with the same task we should focus the last one, since it is the one in the
         // task side panel
-        const otherTaskEl = document.querySelectorAll('#t-' + t.id);
+        const otherTaskEl = document.querySelectorAll('#t-' + CSS.escape(t.id));
         if (
           otherTaskEl?.length <= 1 ||
           Array.from(otherTaskEl).findIndex(
@@ -535,17 +567,54 @@ export class TaskComponent implements OnDestroy, AfterViewInit {
     setTimeout(() => this.focusSelf(), 10);
   }
 
+  handleArrowUp(): void {
+    if (this._focusGroupHeaderIfAtBoundary('prev')) {
+      return;
+    }
+    this.focusPrevious();
+  }
+
+  handleArrowDown(): void {
+    if (this._focusGroupHeaderIfAtBoundary('next')) {
+      return;
+    }
+    this.focusNext();
+  }
+
+  private _focusGroupHeaderIfAtBoundary(direction: 'prev' | 'next'): boolean {
+    const adjacent = findAdjacentFocusable(
+      this._elementRef.nativeElement,
+      direction,
+      GROUP_NAV_SELECTOR,
+    );
+    if (adjacent?.matches('.collapsible-header')) {
+      adjacent.focus();
+      return true;
+    }
+    return false;
+  }
+
   handleArrowLeft(): void {
     const t = this.task();
     const hasSubTasks = t.subTasks && t.subTasks.length > 0;
 
     if (this.isSelected()) {
       this.hideDetailPanel();
-    } else if (hasSubTasks && t._hideSubTasksMode !== HideSubTasksMode.HideAll) {
-      this._taskService.toggleSubTaskMode(t.id, true, false);
-    } else {
-      this.focusPrevious();
+      return;
     }
+    if (hasSubTasks && t._hideSubTasksMode !== HideSubTasksMode.HideAll) {
+      this._taskService.toggleSubTaskMode(t.id, true, false);
+      return;
+    }
+    if (!t.parentId) {
+      const group = CollapsibleComponent.findClosestGroup(this._elementRef.nativeElement);
+      if (group?.isExpanded) {
+        group.focusHeader();
+        group.collapseIfExpanded();
+        return;
+      }
+    }
+    this.focusPrevious();
   }
 
   handleArrowRight(): void {
@@ -616,13 +685,33 @@ export class TaskComponent implements OnDestroy, AfterViewInit {
     newVal,
     wasChanged,
     blurEvent,
+    submitTrigger,
   }: {
     newVal: string;
     wasChanged: boolean;
     blurEvent?: FocusEvent;
+    submitTrigger: SubmitTrigger;
   }): void {
     if (wasChanged) {
       this._taskService.update(this.task().id, { title: newVal });
+    }
+
+    if (submitTrigger === 'modEnter') {
+      this._addSubTaskOrFocusEmpty(newVal);
+      return;
+    }
+
+    // Escape in subtask editor should return focus to previous sibling;
+    // for empty titles we remove the subtask entirely.
+    if (submitTrigger === 'escape' && this.task().parentId) {
+      const previousTaskEl = this._getPreviousTaskEl();
+      // Only auto-delete for freshly spawned empty subtasks.
+      // If user cleared an existing title, Escape should save and keep the task.
+      if (!wasChanged && !newVal) {
+        this._taskService.remove(this.task());
+      }
+      this._focusTaskHost(previousTaskEl);
+      return;
     }
 
     // Only focus self if no input/textarea is receiving focus next
@@ -663,6 +752,10 @@ export class TaskComponent implements OnDestroy, AfterViewInit {
   }
 
   estimateTime(): void {
+    if (this.task().subTaskIds?.length > 0) {
+      return;
+    }
+
     this._matDialog
       .open(DialogTimeEstimateComponent, {
         data: { task: this.task() },
@@ -687,6 +780,37 @@ export class TaskComponent implements OnDestroy, AfterViewInit {
 
   addSubTask(): void {
     this._taskService.addSubTaskTo(this.task().parentId || this.task().id);
+  }
+
+  /**
+   * Mod+Enter (in title editor): focus an existing empty sibling subtask if
+   * one exists, otherwise create a new one. For top-level tasks, "siblings"
+   * means children. `effectiveSelfTitle` is the just-submitted title — use it
+   * instead of `task().title`, which still reflects the pre-update value
+   * within this turn.
+   */
+  private _addSubTaskOrFocusEmpty(effectiveSelfTitle: string): void {
+    const t = this.task();
+    const targetParentId = t.parentId || t.id;
+    const isOnParent = !t.parentId;
+    const isEmpty = (title?: string): boolean => !title?.trim();
+
+    if (isOnParent && t._hideSubTasksMode === HideSubTasksMode.HideAll) {
+      this._taskService.showSubTasks(t.id);
+    }
+
+    this._taskService.getByIdWithSubTaskData$(targetParentId).subscribe((parent) => {
+      const emptyChild = parent.subTasks.find((s) => s.id !== t.id && isEmpty(s.title));
+      if (emptyChild) {
+        this._taskService.focusTaskById(emptyChild.id, true);
+        return;
+      }
+      // Already on the only empty subtask — leave focus where it is.
+      if (!isOnParent && isEmpty(effectiveSelfTitle)) {
+        return;
+      }
+      this._taskService.addSubTaskTo(targetParentId);
+    });
   }
 
   @throttle(200, { leading: true, trailing: false })
@@ -952,6 +1076,7 @@ export class TaskComponent implements OnDestroy, AfterViewInit {
       return;
     } else if (!t.repeatCfgId) {
       this._taskService.moveToProject(t, projectId);
+      setTimeout(() => this.focusNext(true));
     } else {
       forkJoin([
         this._taskRepeatCfgService.getTaskRepeatCfgById$(t.repeatCfgId).pipe(first()),
@@ -982,6 +1107,7 @@ export class TaskComponent implements OnDestroy, AfterViewInit {
                   projectId,
                 });
                 this._taskService.moveToProject(this.task(), projectId);
+                setTimeout(() => this.focusNext(true));
                 return EMPTY;
               }
 
@@ -1024,6 +1150,7 @@ export class TaskComponent implements OnDestroy, AfterViewInit {
                         }
                       });
                       this._taskService.updateArchiveTasks(archiveUpdates);
+                      setTimeout(() => this.focusNext(true));
                     }
                   }),
                 );
@@ -1084,6 +1211,26 @@ export class TaskComponent implements OnDestroy, AfterViewInit {
         })()
       : (taskEls[currentIndex + 1] as HTMLElement);
     return nextEl;
+  }
+
+  private _getPreviousTaskEl(): HTMLElement | undefined {
+    const currentTaskEl = this._elementRef.nativeElement as HTMLElement;
+    const enclosingListEl = currentTaskEl.closest('task-list');
+    const taskEls = Array.from(
+      (enclosingListEl ?? document).querySelectorAll('task'),
+    ) as HTMLElement[];
+    const currentIndex = taskEls.findIndex((el) => el === currentTaskEl);
+    return currentIndex > 0 ? taskEls[currentIndex - 1] : undefined;
+  }
+
+  private _focusTaskHost(taskEl?: HTMLElement): void {
+    if (!taskEl || isTouchActive()) {
+      return;
+    }
+    // Defer to next tick so focus survives blur/delete related DOM updates.
+    window.setTimeout(() => {
+      taskEl.focus();
+    });
   }
 
   get kb(): KeyboardConfig {

@@ -1,4 +1,10 @@
-import { TestBed, fakeAsync, tick, discardPeriodicTasks } from '@angular/core/testing';
+import {
+  TestBed,
+  fakeAsync,
+  tick,
+  discardPeriodicTasks,
+  flushMicrotasks,
+} from '@angular/core/testing';
 import {
   HttpClientTestingModule,
   HttpTestingController,
@@ -20,6 +26,16 @@ import { SnackService } from '../../core/snack/snack.service';
 import { take } from 'rxjs/operators';
 import { Subscription } from 'rxjs';
 import { getDbDateStr } from '../../util/get-db-date-str';
+import { PluginIssueProviderRegistryService } from '../../plugins/issue-provider/plugin-issue-provider-registry.service';
+import { PluginHttpService } from '../../plugins/issue-provider/plugin-http.service';
+import { IssueProviderPluginType } from '../issue/issue.model';
+import { NotIcalResponseError } from '../schedule/ical/is-likely-ical';
+// Static import forces ical.js into the main test bundle so the dynamic
+// import() inside loadIcalModule resolves from the webpack module cache
+// without a JSONP chunk request — which times out in Karma's test runner.
+import 'ical.js';
+import { loadIcalModule } from '../schedule/ical/ical-lazy-loader';
+import { CalendarIntegrationEvent } from './calendar-integration.model';
 
 describe('CalendarIntegrationService', () => {
   let service: CalendarIntegrationService;
@@ -161,24 +177,33 @@ END:VCALENDAR`;
         discardPeriodicTasks();
       }));
 
-      it('should filter out past events from cache', fakeAsync(() => {
+      it('should filter out events older than one week from cache', fakeAsync(() => {
+        const ONE_WEEK = 60 * 60 * 1000 * 24 * 7;
         const cachedData = [
           {
             items: [
               {
-                id: 'past-event',
+                id: 'old-event',
                 calProviderId: 'provider-1',
                 issueProviderKey: 'ICAL',
-                title: 'Past Event',
+                title: 'Old Event',
+                start: Date.now() - ONE_WEEK - 7200000, // more than 1 week ago
+                duration: 3600000,
+              },
+              {
+                id: 'recent-past-event',
+                calProviderId: 'provider-1',
+                issueProviderKey: 'ICAL',
+                title: 'Recent Past Event',
                 start: Date.now() - 7200000, // 2 hours ago
-                duration: 3600000, // 1 hour - so end is 1 hour ago
+                duration: 3600000,
               },
               {
                 id: 'future-event',
                 calProviderId: 'provider-1',
                 issueProviderKey: 'ICAL',
                 title: 'Future Event',
-                start: Date.now() + 60000, // Future event
+                start: Date.now() + 60000,
                 duration: 3600000,
               },
             ],
@@ -195,9 +220,10 @@ END:VCALENDAR`;
         subscriptions.push(sub);
 
         tick(0);
-        // Should only have the future event
-        expect((emittedValue as any[])[0].items.length).toBe(1);
-        expect((emittedValue as any[])[0].items[0].id).toBe('future-event');
+        // Old event (> 1 week) is filtered; recent past and future events are kept
+        expect((emittedValue as any[])[0].items.length).toBe(2);
+        expect((emittedValue as any[])[0].items[0].id).toBe('recent-past-event');
+        expect((emittedValue as any[])[0].items[1].id).toBe('future-event');
         discardPeriodicTasks();
       }));
     });
@@ -612,6 +638,90 @@ END:VCALENDAR`;
   });
 
   describe('requestEvents$', () => {
+    // iCal fixture with a single event on 2026-05-14 (inside any reasonable test window).
+    const MOCK_ICAL_NEAR_FUTURE = [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'BEGIN:VEVENT',
+      'DTSTART:20260514T100000Z',
+      'DTEND:20260514T110000Z',
+      'SUMMARY:Near Future Test Event',
+      'UID:near-future-1',
+      'END:VEVENT',
+      'END:VCALENDAR',
+    ].join('\r\n');
+
+    const FIXTURE_START = new Date('2026-01-01').getTime();
+    const FIXTURE_END = new Date('2027-01-01').getTime();
+
+    // Pre-load the ical.js module before each stamping test so that the
+    // module-level cache in ical-lazy-loader is warm.  Once warm, calls to
+    // loadIcalModule() return a synchronously-resolved Promise that
+    // flushMicrotasks() can drain inside fakeAsync.
+    beforeEach(async () => {
+      await loadIcalModule();
+    });
+
+    const requestAndFlush = (
+      provider: IssueProviderCalendar,
+    ): CalendarIntegrationEvent[] => {
+      let result: CalendarIntegrationEvent[] = [];
+      service.requestEvents$(provider, FIXTURE_START, FIXTURE_END).subscribe((v) => {
+        result = v;
+      });
+      httpMock.expectOne(provider.icalUrl).flush(MOCK_ICAL_NEAR_FUTURE);
+      // Drain the Promise microtasks from the async ICAL parser
+      flushMicrotasks();
+      return result;
+    };
+
+    describe('isReferenceCalendar stamping', () => {
+      it('should stamp isReferenceCalendar: true on every event when provider is a reference calendar', fakeAsync(() => {
+        const result = requestAndFlush(createMockProvider({ isReferenceCalendar: true }));
+        expect(result.length).toBeGreaterThan(0);
+        result.forEach((ev) => expect((ev as any).isReferenceCalendar).toBe(true));
+      }));
+
+      it('should not set isReferenceCalendar on events from a regular provider', fakeAsync(() => {
+        const result = requestAndFlush(
+          createMockProvider({ isReferenceCalendar: false }),
+        );
+        expect(result.length).toBeGreaterThan(0);
+        result.forEach((ev) => expect((ev as any).isReferenceCalendar).toBeFalsy());
+      }));
+
+      it('should not set isReferenceCalendar when provider flag is absent', fakeAsync(() => {
+        const result = requestAndFlush(createMockProvider());
+        expect(result.length).toBeGreaterThan(0);
+        result.forEach((ev) => expect((ev as any).isReferenceCalendar).toBeFalsy());
+      }));
+    });
+
+    describe('color stamping', () => {
+      it('should stamp color on every event when the provider has a color configured', fakeAsync(() => {
+        const result = requestAndFlush(createMockProvider({ color: '#4caf50' }));
+        expect(result.length).toBeGreaterThan(0);
+        result.forEach((ev) => expect((ev as any).color).toBe('#4caf50'));
+      }));
+
+      it('should not add a color property when the provider has no color configured', fakeAsync(() => {
+        const result = requestAndFlush(createMockProvider({ color: undefined }));
+        expect(result.length).toBeGreaterThan(0);
+        result.forEach((ev) => expect((ev as any).color).toBeFalsy());
+      }));
+
+      it('should stamp both color and isReferenceCalendar when both are set', fakeAsync(() => {
+        const result = requestAndFlush(
+          createMockProvider({ color: '#ff5722', isReferenceCalendar: true }),
+        );
+        expect(result.length).toBeGreaterThan(0);
+        result.forEach((ev) => {
+          expect((ev as any).color).toBe('#ff5722');
+          expect((ev as any).isReferenceCalendar).toBe(true);
+        });
+      }));
+    });
+
     it('should fetch events from provider URL', fakeAsync(() => {
       const mockProvider = createMockProvider();
 
@@ -658,6 +768,64 @@ END:VCALENDAR`;
 
       tick(0);
       // Should not throw, might return empty array or parsed result
+    }));
+
+    it('should surface a dedicated snack message when the URL returns HTML instead of iCal', fakeAsync(() => {
+      const mockProvider = createMockProvider();
+      mockSnackService.open.calls.reset();
+
+      let result: unknown;
+      const sub = service.requestEvents$(mockProvider).subscribe((val) => {
+        result = val;
+      });
+      subscriptions.push(sub);
+
+      const req = httpMock.expectOne(mockProvider.icalUrl);
+      // Simulate Office365 returning an HTML redirect page when the share link is revoked
+      req.flush(
+        '<html><head><title>Object moved</title></head><body>' +
+          '<h2>Object moved to <a href="https://outlook.office365.com/mail/">here</a>.</h2>' +
+          '</body></html>',
+      );
+
+      tick(0);
+      expect(result).toEqual([]);
+      expect(mockSnackService.open).toHaveBeenCalledWith(
+        jasmine.objectContaining({
+          type: 'ERROR',
+          msg: 'F.CALENDARS.S.CAL_PROVIDER_NOT_ICAL',
+        }),
+      );
+    }));
+
+    it('should propagate the typed error and still show the snack when isForwardError=true', fakeAsync(() => {
+      const mockProvider = createMockProvider();
+      mockSnackService.open.calls.reset();
+
+      let caughtError: unknown;
+      const sub = service
+        .requestEvents$(mockProvider, Date.now(), Date.now() + 86_400_000, true)
+        .subscribe({
+          next: () => {},
+          error: (err) => {
+            caughtError = err;
+          },
+        });
+      subscriptions.push(sub);
+
+      const req = httpMock.expectOne(mockProvider.icalUrl);
+      req.flush('<html>not ical</html>');
+
+      tick(0);
+      expect(mockSnackService.open).toHaveBeenCalledWith(
+        jasmine.objectContaining({
+          msg: 'F.CALENDARS.S.CAL_PROVIDER_NOT_ICAL',
+        }),
+      );
+      // The NotIcalResponseError must propagate unwrapped so upstream consumers
+      // can branch on its identity via `instanceof`. A plain-Error wrapper (the
+      // prior behaviour via `throw new Error(err)`) would fail this check.
+      expect(caughtError).toBeInstanceOf(NotIcalResponseError);
     }));
   });
 
@@ -1503,5 +1671,86 @@ END:VCALENDAR`;
 
       discardPeriodicTasks();
     }));
+  });
+
+  // Regression guard for #7238: dueWithTime was dropped during the PluginSearchResult →
+  // CalendarIntegrationEvent conversion, causing tasks created from plugin calendar events
+  // with a precise start time to fall back to dueDay instead of addAndSchedule().
+  describe('_fetchPluginCalendarEvents (plugin → event mapping)', () => {
+    it('should propagate dueWithTime from PluginSearchResult to CalendarIntegrationEvent', async () => {
+      const mockPluginProvider = {
+        id: 'plugin-provider-id',
+        issueProviderKey: 'plugin:my-calendar',
+        pluginConfig: { apiKey: 'x' },
+      } as unknown as IssueProviderPluginType;
+
+      const pluginResults = [
+        {
+          id: 'evt-with-time',
+          title: 'Timed event',
+          start: 1701700000000,
+          dueWithTime: 1701700000000,
+          duration: 3600000,
+        },
+        {
+          id: 'evt-without-time',
+          title: 'All-day event',
+          start: 1701700000000,
+          duration: 0,
+          isAllDay: true,
+        },
+        {
+          // Must be filtered out (no start)
+          id: 'evt-no-start',
+          title: 'No start',
+        },
+      ];
+
+      const mockRegistry = {
+        getProvider: jasmine.createSpy('getProvider').and.returnValue({
+          definition: {
+            getNewIssuesForBacklog: jasmine
+              .createSpy('getNewIssuesForBacklog')
+              .and.returnValue(Promise.resolve(pluginResults)),
+            getHeaders: jasmine.createSpy('getHeaders').and.returnValue({}),
+          },
+          allowPrivateNetwork: false,
+        }),
+      };
+      const mockPluginHttp = {
+        createHttpHelper: jasmine.createSpy('createHttpHelper').and.returnValue({}),
+      };
+
+      TestBed.resetTestingModule();
+      TestBed.configureTestingModule({
+        imports: [HttpClientTestingModule],
+        providers: [
+          CalendarIntegrationService,
+          provideMockStore({
+            selectors: [
+              { selector: selectCalendarProviders, value: [] },
+              { selector: selectEnabledIssueProviders, value: [] },
+              { selector: selectAllCalendarTaskEventIds, value: [] },
+            ],
+          }),
+          { provide: SnackService, useValue: mockSnackService },
+          { provide: PluginIssueProviderRegistryService, useValue: mockRegistry },
+          { provide: PluginHttpService, useValue: mockPluginHttp },
+        ],
+      });
+
+      const freshService = TestBed.inject(CalendarIntegrationService);
+      const events = await (freshService as any)._fetchPluginCalendarEvents(
+        mockPluginProvider,
+      );
+
+      expect(events.length).toBe(2);
+      const timed = events.find((e: any) => e.id === 'evt-with-time');
+      const allDay = events.find((e: any) => e.id === 'evt-without-time');
+      expect(timed).toBeDefined();
+      expect(timed.dueWithTime).toBe(1701700000000);
+      expect(allDay).toBeDefined();
+      expect(allDay.dueWithTime).toBeUndefined();
+    });
   });
 });

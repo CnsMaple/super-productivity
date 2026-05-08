@@ -50,6 +50,7 @@ export const DEFAULT_GLOBAL_CONFIG: GlobalConfigState = {
     isLocalRestApiEnabled: false,
     isTrayShowCurrentCountdown: true,
     startOfNextDay: 0,
+    startOfNextDayTime: '00:00',
     isDisableAnimations: false,
     isDisableCelebration: false,
     isShowProductivityTipLonger: false,
@@ -93,14 +94,10 @@ export const DEFAULT_GLOBAL_CONFIG: GlobalConfigState = {
   focusMode: {
     isSkipPreparation: false,
     isPlayTick: false,
-    isPauseTrackingDuringBreak: false,
-    isSyncSessionWithTracking: false,
-    isStartInBackground: false,
-  },
-  taskWidget: {
-    isEnabled: false,
-    isAlwaysShow: false,
-    opacity: 95,
+    focusModeSound: 'off',
+    isPauseTrackingDuringBreak: true,
+    autoStartFocusOnPlay: false,
+    isManualBreakStart: false,
   },
   clipboardImages: {
     imagePath: null,

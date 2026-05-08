@@ -4,7 +4,7 @@ import {
   MiscConfig,
 } from '../global-config.model';
 import { T } from '../../../t.const';
-import { IS_ELECTRON } from '../../../app.constants';
+import { IS_ELECTRON, IS_GNOME_DESKTOP } from '../../../app.constants';
 
 export const MISC_SETTINGS_FORM_CFG: ConfigFormSection<MiscConfig> = {
   title: T.GCF.MISC.TITLE,
@@ -50,16 +50,17 @@ export const MISC_SETTINGS_FORM_CFG: ConfigFormSection<MiscConfig> = {
         ]
       : []) as LimitedFormlyFieldConfig<MiscConfig>[]),
     {
-      key: 'startOfNextDay',
+      key: 'startOfNextDayTime',
       type: 'input',
-      defaultValue: 0,
+      defaultValue: '00:00',
       templateOptions: {
         required: true,
         label: T.GCF.MISC.START_OF_NEXT_DAY,
         description: T.GCF.MISC.START_OF_NEXT_DAY_HINT,
-        type: 'number',
-        min: 0,
-        max: 23,
+        type: 'text',
+        pattern: '^([01]\\d|2[0-3]):([0-5]\\d)$',
+        maxLength: 5,
+        minLength: 5,
       },
     },
     {
@@ -90,7 +91,7 @@ export const MISC_SETTINGS_FORM_CFG: ConfigFormSection<MiscConfig> = {
         label: T.GCF.MISC.IS_TRAY_SHOW_CURRENT_COUNTDOWN,
       },
     },
-    ...((IS_ELECTRON
+    ...((IS_ELECTRON && !IS_GNOME_DESKTOP
       ? [
           {
             key: 'isUseCustomWindowTitleBar',
@@ -104,14 +105,10 @@ export const MISC_SETTINGS_FORM_CFG: ConfigFormSection<MiscConfig> = {
       : []) as LimitedFormlyFieldConfig<MiscConfig>[]),
     {
       key: 'defaultStartPage',
-      type: 'select',
+      type: 'start-page-select',
       defaultValue: 0,
       templateOptions: {
         label: T.GCF.MISC.DEFAULT_START_PAGE,
-        options: [
-          { label: T.G.TODAY_TAG_TITLE, value: 0 },
-          { label: T.G.INBOX_PROJECT_TITLE, value: 1 },
-        ],
       },
     },
   ],

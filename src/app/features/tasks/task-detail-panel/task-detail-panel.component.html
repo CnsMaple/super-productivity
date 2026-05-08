@@ -88,7 +88,7 @@
       class="input-item --estimate"
     >
       <ng-container input-title>
-        <mat-icon>timer</mat-icon>
+        <mat-icon>hourglass_empty</mat-icon>
         <span>{{ T.F.TASK.ADDITIONAL_INFO.TIME | translate }}</span>
       </ng-container>
       <ng-container input-value>
@@ -137,6 +137,16 @@
           }
         </div>
       }
+      @if (task().dueWithTime || task().dueDay) {
+        <button
+          mat-icon-button
+          class="quick-chip"
+          (click)="unscheduleTask($event)"
+          [matTooltip]="T.F.TASK.CMP.UNSCHEDULE_TASK | translate"
+        >
+          <mat-icon>event_busy</mat-icon>
+        </button>
+      }
     </ng-container>
   </task-detail-item>
   <task-detail-item
@@ -160,6 +170,16 @@
         <div class="reminder-value">
           {{ task().deadlineDay | localDateStr: '' }}
         </div>
+      }
+      @if (task().deadlineWithTime || task().deadlineDay) {
+        <button
+          mat-icon-button
+          class="quick-chip"
+          (click)="removeDeadline($event)"
+          [matTooltip]="T.F.TASK.CMP.REMOVE_DEADLINE | translate"
+        >
+          <mat-icon>close</mat-icon>
+        </button>
       }
     </ng-container>
   </task-detail-item>

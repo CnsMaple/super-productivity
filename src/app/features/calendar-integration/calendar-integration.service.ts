@@ -57,8 +57,10 @@ import { PluginHttpService } from '../../plugins/issue-provider/plugin-http.serv
 import { selectEnabledIssueProviders } from '../issue/store/issue-provider.selectors';
 import { PluginSearchResult } from '../../plugins/issue-provider/plugin-issue-provider.model';
 import { HiddenCalendarEventsService } from './hidden-calendar-events.service';
+import { NotIcalResponseError } from '../schedule/ical/is-likely-ical';
 
 const ONE_MONTHS = 60 * 60 * 1000 * 24 * 31;
+const ONE_WEEK = 60 * 60 * 1000 * 24 * 7;
 const PLUGIN_CALENDAR_POLL_INTERVAL = 5 * 60 * 1000; // 5 minutes
 
 @Injectable({
@@ -227,6 +229,7 @@ export class CalendarIntegrationService {
         duration: r.duration ?? 0,
         isAllDay: r.isAllDay,
         issueProviderKey: pluginProvider.issueProviderKey,
+        dueWithTime: r.dueWithTime,
       }));
   }
 
@@ -331,17 +334,31 @@ export class CalendarIntegrationService {
             calProvider.icalUrl,
           ),
         ),
+        map((events) =>
+          events.map((ev) => ({
+            ...ev,
+            isReferenceCalendar: !!calProvider.isReferenceCalendar,
+            color: calProvider.color,
+          })),
+        ),
         catchError((err) => {
           Log.err(err);
-          this._snackService.open({
-            type: 'ERROR',
-            msg: T.F.CALENDARS.S.CAL_PROVIDER_ERROR,
-            translateParams: {
-              errTxt: getErrorTxt(err),
-            },
-          });
+          if (err instanceof NotIcalResponseError) {
+            this._snackService.open({
+              type: 'ERROR',
+              msg: T.F.CALENDARS.S.CAL_PROVIDER_NOT_ICAL,
+            });
+          } else {
+            this._snackService.open({
+              type: 'ERROR',
+              msg: T.F.CALENDARS.S.CAL_PROVIDER_ERROR,
+              translateParams: {
+                errTxt: getErrorTxt(err),
+              },
+            });
+          }
           if (isForwardError) {
-            throw new Error(err);
+            throw err;
           }
           return of([]);
         }),
@@ -354,7 +371,7 @@ export class CalendarIntegrationService {
   ): Observable<CalendarIntegrationEvent[]> {
     return this.requestEvents$(
       calProvider,
-      Date.now(),
+      Date.now() - ONE_WEEK,
       Date.now() + ONE_MONTHS,
       isForwardError,
     );
@@ -371,11 +388,11 @@ export class CalendarIntegrationService {
 
     return (
       cached
-        // filter out cached past entries
+        // filter out cached entries older than one week
         .map((provider) => ({
           ...provider,
           items: provider.items
-            .filter((item) => item.start + item.duration >= now)
+            .filter((item) => item.start + item.duration >= now - ONE_WEEK)
             // Backfill issueProviderKey for events cached before it became required
             .map((item) =>
               item.issueProviderKey ? item : { ...item, issueProviderKey: 'ICAL' },

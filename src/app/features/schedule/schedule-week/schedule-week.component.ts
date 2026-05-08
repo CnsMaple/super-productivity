@@ -59,6 +59,7 @@ const D_HOURS = 24;
     '[class.is-resizing-event]': 'isAnyEventResizing()',
     '[class]': 'dragEventTypeClass()',
     '[attr.data-horizontal-scroll]': 'isHorizontalScrollMode() || null',
+    '[attr.data-hscrolled]': 'isHScrolled() || null',
   },
 })
 export class ScheduleWeekComponent implements OnInit, AfterViewInit, OnDestroy {
@@ -68,6 +69,7 @@ export class ScheduleWeekComponent implements OnInit, AfterViewInit, OnDestroy {
 
   isInPanel = input<boolean>(false);
   isHorizontalScrollMode = input<boolean>(false);
+  isHScrolled = input<boolean>(false);
   events = input<ScheduleEvent[] | null>([]);
   beyondBudget = input<ScheduleEvent[][] | null>([]);
   daysToShow = input<string[]>([]);
@@ -114,6 +116,13 @@ export class ScheduleWeekComponent implements OnInit, AfterViewInit, OnDestroy {
 
   safeEvents = computed(() => this.events() || []);
   safeBeyondBudget = computed(() => this.beyondBudget() || []);
+
+  // Split projections (RepeatProjectionSplit, SplitTaskContinued, …) share the
+  // task/repeat-cfg id across segments. Combine day + start hour so each visual
+  // segment has a unique @for track key and Angular can reconcile them.
+  trackEventKey(ev: ScheduleEvent): string {
+    return `${ev.id}_${ev.plannedForDay ?? ''}_${ev.startHours}`;
+  }
 
   newTaskPlaceholder = signal<{
     style: string;

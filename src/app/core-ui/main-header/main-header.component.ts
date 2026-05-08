@@ -45,6 +45,7 @@ import { DateService } from '../../core/date/date.service';
 import { UserProfileButtonComponent } from '../../features/user-profile/user-profile-button/user-profile-button.component';
 import { FocusButtonComponent } from './focus-button/focus-button.component';
 import { UserProfileService } from '../../features/user-profile/user-profile.service';
+import { FocusModeService } from '../../features/focus-mode/focus-mode.service';
 
 @Component({
   selector: 'main-header',
@@ -84,6 +85,7 @@ export class MainHeaderComponent implements OnDestroy {
   private readonly _metricService = inject(MetricService);
   private readonly _dateService = inject(DateService);
   private readonly _dataInitStateService = inject(DataInitStateService);
+  private readonly _focusModeService = inject(FocusModeService);
 
   readonly isDataLoaded = toSignal(this._dataInitStateService.isAllDataLoadedInitially$, {
     initialValue: false,
@@ -126,13 +128,6 @@ export class MainHeaderComponent implements OnDestroy {
   );
   isRouteWithSidePanel = toSignal(this._isRouteWithSidePanel$, { initialValue: true });
 
-  private _isScheduleSection$ = this._router.events.pipe(
-    filter((event): event is NavigationEnd => event instanceof NavigationEnd),
-    map((event) => !!event.urlAfterRedirects.match(/(schedule)$/)),
-    startWith(!!this._router.url.match(/(schedule)$/)),
-  );
-  isScheduleSection = toSignal(this._isScheduleSection$, { initialValue: false });
-
   // Convert more observables to signals
 
   currentTask = toSignal(this.taskService.currentTask$);
@@ -166,6 +161,22 @@ export class MainHeaderComponent implements OnDestroy {
   readonly isFocusModeEnabled = computed(() => {
     return this.globalConfigService.appFeatures().isFocusModeEnabled;
   });
+  // On mobile the focus-button is normally hidden to save space. When a focus
+  // session/break is in flight (including paused) the running countdown lives
+  // on this button, so surface it on mobile too — otherwise the user has no
+  // way to see or resume the session after the overlay is closed.
+  readonly isFocusSessionActive = computed(
+    () =>
+      this._focusModeService.isSessionRunning() ||
+      this._focusModeService.isSessionPaused() ||
+      this._focusModeService.isBreakActive(),
+  );
+  readonly isFocusButtonVisible = computed(
+    () =>
+      this.isFocusModeEnabled() &&
+      !this.isXxxs() &&
+      (this.showDesktopButtons() || this.isFocusSessionActive()),
+  );
   readonly isSyncIconEnabled = computed(() => {
     return this.globalConfigService.appFeatures().isSyncIconEnabled;
   });
@@ -185,12 +196,6 @@ export class MainHeaderComponent implements OnDestroy {
   });
 
   private _subs: Subscription = new Subscription();
-
-  selectedTimeView = computed(() => this.layoutService.selectedTimeView());
-
-  selectTimeView(view: 'week' | 'month'): void {
-    this.layoutService.selectedTimeView.set(view);
-  }
 
   ngOnDestroy(): void {
     this._subs.unsubscribe();
@@ -224,9 +229,9 @@ export class MainHeaderComponent implements OnDestroy {
     if (this.dialogSyncCfgRef) {
       return;
     }
-    const { DialogSyncInitialCfgComponent } =
-      await import('../../imex/sync/dialog-sync-initial-cfg/dialog-sync-initial-cfg.component');
-    this.dialogSyncCfgRef = this.matDialog.open(DialogSyncInitialCfgComponent);
+    const { DialogSyncCfgComponent } =
+      await import('../../imex/sync/dialog-sync-cfg/dialog-sync-cfg.component');
+    this.dialogSyncCfgRef = this.matDialog.open(DialogSyncCfgComponent);
     this._subs.add(
       this.dialogSyncCfgRef.afterClosed().subscribe(() => {
         this.dialogSyncCfgRef = null;

@@ -28,7 +28,10 @@ export type MiscConfig = Readonly<{
   isConfirmBeforeExitWithoutFinishDay: boolean;
   isMinimizeToTray: boolean;
   isLocalRestApiEnabled?: boolean;
+  /** @deprecated Legacy hour-only representation. Use `startOfNextDayTime` as canonical source of truth. */
   startOfNextDay: number;
+  /** Canonical start-of-next-day value, including minute precision. */
+  startOfNextDayTime?: string;
   isDisableAnimations: boolean;
   // optional because it was added later
   isDisableCelebration?: boolean;
@@ -36,7 +39,8 @@ export type MiscConfig = Readonly<{
   isTrayShowCurrentCountdown?: boolean;
   isUseCustomWindowTitleBar?: boolean;
   customTheme?: string;
-  defaultStartPage?: number;
+  // number: one of DefaultStartPage. string: project id.
+  defaultStartPage?: number | string;
   unsplashApiKey?: string | null;
 
   // @todo: remove deprecated items in future major releases, after giving users time to migrate
@@ -229,9 +233,22 @@ export type DominaModeConfig = Readonly<{
 
 export type FocusModeConfig = Readonly<{
   isSkipPreparation: boolean;
+  focusModeSound?: 'off' | 'tick' | 'whiteNoise';
+  /** @deprecated Use focusModeSound instead. Kept for backward-compat validation of old data. */
   isPlayTick?: boolean;
   isPauseTrackingDuringBreak?: boolean;
-  isSyncSessionWithTracking?: boolean;
+  /**
+   * When true, pressing the time-tracking play button on a task also starts a
+   * focus session (using the persistent mode the user last chose). The session
+   * runs quietly via the header indicator — no overlay, no preparation screen.
+   * Off by default; opt-in for users who want play = tracking + focus.
+   */
+  autoStartFocusOnPlay?: boolean;
+  /**
+   * @deprecated The auto-spawned session is now indicator-only by design — the
+   * overlay never opens automatically — so this flag has no behavioural effect.
+   * Kept on the type so old persisted configs deserialize without errors.
+   */
   isStartInBackground?: boolean;
   isManualBreakStart?: boolean;
 }>;
@@ -270,7 +287,10 @@ export type GlobalConfigState = Readonly<{
   schedule: ScheduleConfig;
   dominaMode: DominaModeConfig;
   focusMode: FocusModeConfig;
-  taskWidget?: TaskWidgetConfig;
+  // NOTE: taskWidget is intentionally NOT part of GlobalConfigState — it is a
+  // per-instance setting persisted in localStorage (see TaskWidgetSettingsService)
+  // because OS behavior (window dragging/resizing, transparency) varies enough
+  // between Mac/Linux/Windows that syncing it across devices is undesirable.
   clipboardImages?: ClipboardImagesConfig;
 
   sync: SyncConfig;
@@ -278,6 +298,13 @@ export type GlobalConfigState = Readonly<{
 }>;
 
 export type GlobalConfigSectionKey = keyof GlobalConfigState | 'EMPTY';
+
+// 'taskWidget' isn't on GlobalConfigState (it's per-instance, see above), but
+// the form layer still uses this key in form configs and the config-page save
+// handler. Kept separate from `GlobalConfigSectionKey` so it cannot leak into
+// `updateGlobalConfigSection` action payloads (which would create phantom ops
+// in the sync log).
+export type GlobalConfigFormSectionKey = GlobalConfigSectionKey | 'taskWidget';
 
 export type GlobalSectionConfig =
   | MiscConfig
@@ -308,7 +335,7 @@ export type CustomCfgSection =
 // Intermediate model
 export interface ConfigFormSection<FormModel> {
   title: string;
-  key: GlobalConfigSectionKey | ProjectCfgFormKey;
+  key: GlobalConfigFormSectionKey | ProjectCfgFormKey;
   help?: string;
   helpArr?: { h?: string; p: string; p2?: string; p3?: string; p4?: string }[];
   customSection?: CustomCfgSection;

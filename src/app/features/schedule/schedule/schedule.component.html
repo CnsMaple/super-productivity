@@ -1,38 +1,101 @@
-<!--  <div class="title">February 2019 Week 6</div>-->
-
 <div class="schedule-nav-controls">
-  <button
-    mat-icon-button
-    (click)="goToPreviousPeriod()"
-    [disabled]="isViewingToday()"
-    [attr.aria-label]="isMonthView() ? 'Go to previous month' : 'Go to previous week'"
-    [matTooltip]="isMonthView() ? 'Previous Month' : 'Previous Week'"
-  >
-    <mat-icon>chevron_left</mat-icon>
-  </button>
+  <div class="week-month-selector">
+    <button
+      mat-icon-button
+      class="week-month-btn"
+      [class.active]="!isMonthView()"
+      (click)="selectTimeView('week')"
+      [matTooltip]="T.F.SCHEDULE.VIEW_WEEK | translate"
+      [attr.aria-label]="T.F.SCHEDULE.VIEW_WEEK | translate"
+    >
+      <mat-icon>view_week</mat-icon>
+    </button>
+    <button
+      mat-icon-button
+      class="week-month-btn"
+      [class.active]="isMonthView()"
+      (click)="selectTimeView('month')"
+      [matTooltip]="T.F.SCHEDULE.VIEW_MONTH | translate"
+      [attr.aria-label]="T.F.SCHEDULE.VIEW_MONTH | translate"
+    >
+      <mat-icon>calendar_month</mat-icon>
+    </button>
+  </div>
 
-  <button
-    mat-button
-    (click)="goToToday()"
-    [disabled]="isViewingToday()"
-    aria-label="Go to today"
-  >
-    {{ T.F.SCHEDULE.NOW | translate }}
-  </button>
+  <div class="date-nav-group">
+    <button
+      mat-icon-button
+      (click)="goToPreviousPeriod()"
+      [disabled]="isViewingToday()"
+      [attr.aria-label]="
+        (isMonthView() ? T.F.SCHEDULE.PREVIOUS_MONTH : T.F.SCHEDULE.PREVIOUS_WEEK)
+          | translate
+      "
+      [matTooltip]="
+        (isMonthView() ? T.F.SCHEDULE.PREVIOUS_MONTH : T.F.SCHEDULE.PREVIOUS_WEEK)
+          | translate
+      "
+    >
+      <mat-icon>chevron_left</mat-icon>
+    </button>
 
-  <button
-    mat-icon-button
-    (click)="goToNextPeriod()"
-    [attr.aria-label]="isMonthView() ? 'Go to next month' : 'Go to next week'"
-    [matTooltip]="isMonthView() ? 'Next Month' : 'Next Week'"
-  >
-    <mat-icon>chevron_right</mat-icon>
-  </button>
+    <button
+      mat-icon-button
+      class="today-btn"
+      (click)="goToToday()"
+      [disabled]="isViewingToday()"
+      [attr.aria-label]="T.G.TODAY_TAG_TITLE | translate"
+      [matTooltip]="T.G.TODAY_TAG_TITLE | translate"
+    >
+      <mat-icon>radio_button_unchecked</mat-icon>
+    </button>
+
+    <button
+      mat-icon-button
+      (click)="goToNextPeriod()"
+      [attr.aria-label]="
+        (isMonthView() ? T.F.SCHEDULE.NEXT_MONTH : T.F.SCHEDULE.NEXT_WEEK) | translate
+      "
+      [matTooltip]="
+        (isMonthView() ? T.F.SCHEDULE.NEXT_MONTH : T.F.SCHEDULE.NEXT_WEEK) | translate
+      "
+    >
+      <mat-icon>chevron_right</mat-icon>
+    </button>
+  </div>
+
+  <div class="title">{{ headerTitle() }}</div>
 </div>
+
+@if (showCalFilterBar()) {
+  <mat-chip-listbox
+    class="cal-filter-bar"
+    [multiple]="true"
+    [attr.aria-label]="T.F.SCHEDULE.CALENDAR_VISIBILITY | translate"
+    (change)="onCalProvidersChange($event)"
+  >
+    @for (provider of enabledCalendarProviders(); track provider.id) {
+      <mat-chip-option
+        [value]="provider.id"
+        [selected]="!hiddenCalendarProviderIds().includes(provider.id)"
+        [matTooltip]="calProviderLabel(provider)"
+      >
+        @if (provider.color) {
+          <span
+            class="cal-color-dot"
+            [style.background]="provider.color"
+          ></span>
+        }
+        {{ calProviderInitials(provider) }}
+      </mat-chip-option>
+    }
+  </mat-chip-listbox>
+}
 
 <div
   class="scroll-wrapper"
   [attr.data-horizontal-scroll]="shouldEnableHorizontalScroll() || null"
+  (scroll)="onScrollWrapperScroll($event)"
 >
   @if (isMonthView()) {
     <schedule-month
@@ -50,6 +113,7 @@
       [currentTimeRow]="currentTimeRow()"
       [todayDateStr]="_todayDateStr()"
       [isHorizontalScrollMode]="shouldEnableHorizontalScroll()"
+      [isHScrolled]="isHScrolled()"
     ></schedule-week>
   }
 </div>

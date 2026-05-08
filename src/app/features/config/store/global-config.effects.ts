@@ -115,20 +115,23 @@ export class GlobalConfigEffects {
       filter(({ sectionKey }) => sectionKey === 'misc'),
       filter(
         ({ sectionCfg }) =>
-          sectionCfg && typeof (sectionCfg as MiscConfig).startOfNextDay === 'number',
+          sectionCfg &&
+          (typeof (sectionCfg as MiscConfig).startOfNextDay === 'number' ||
+            typeof (sectionCfg as MiscConfig).startOfNextDayTime === 'string'),
       ),
       withLatestFrom(this._store.select(selectAllTasks)),
       switchMap(([{ sectionCfg }, allTasks]) => {
         const oldTodayStr = this._dateService.todayStr();
+        const miscCfg = sectionCfg as MiscConfig;
         this._dateService.setStartOfNextDayDiff(
-          (sectionCfg as MiscConfig).startOfNextDay,
+          miscCfg.startOfNextDayTime ?? miscCfg.startOfNextDay,
         );
         const newTodayStr = this._dateService.todayStr();
 
         const actions: Action[] = [
           AppStateActions.setTodayString({
             todayStr: newTodayStr,
-            startOfNextDayDiffMs: this._dateService.startOfNextDayDiff,
+            startOfNextDayDiffMs: this._dateService.getStartOfNextDayDiffMs(),
           }),
         ];
 
@@ -154,13 +157,14 @@ export class GlobalConfigEffects {
       ofType(loadAllData),
       tap(({ appDataComplete }) => {
         const cfg = appDataComplete.globalConfig || DEFAULT_GLOBAL_CONFIG;
-        const startOfNextDay = cfg && cfg.misc && cfg.misc.startOfNextDay;
+        const misc = cfg?.misc ?? DEFAULT_GLOBAL_CONFIG.misc;
+        const startOfNextDay = misc.startOfNextDayTime ?? misc.startOfNextDay;
         this._dateService.setStartOfNextDayDiff(startOfNextDay);
       }),
       map(() =>
         AppStateActions.setTodayString({
           todayStr: this._dateService.todayStr(),
-          startOfNextDayDiffMs: this._dateService.startOfNextDayDiff,
+          startOfNextDayDiffMs: this._dateService.getStartOfNextDayDiffMs(),
         }),
       ),
     ),

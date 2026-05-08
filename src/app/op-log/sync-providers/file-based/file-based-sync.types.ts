@@ -100,19 +100,6 @@ export interface FileBasedSyncData {
 }
 
 /**
- * Error thrown when sync data file is corrupted or invalid.
- */
-export class SyncDataCorruptedError extends Error {
-  constructor(
-    message: string,
-    public readonly filePath: string,
-  ) {
-    super(`Sync data corrupted at ${filePath}: ${message}`);
-    this.name = 'SyncDataCorruptedError';
-  }
-}
-
-/**
  * Constants for file-based sync
  */
 export const FILE_BASED_SYNC_CONSTANTS = {
@@ -134,9 +121,10 @@ export const FILE_BASED_SYNC_CONSTANTS = {
   /** Storage key prefix for last known sync version */
   SYNC_VERSION_STORAGE_KEY_PREFIX: 'FILE_SYNC_VERSION_',
 
-  /** Maximum number of upload retry attempts on revision mismatch */
-  MAX_UPLOAD_RETRIES: 2,
-
-  /** Base delay in ms for exponential backoff between retries */
-  RETRY_BASE_DELAY_MS: 500,
+  /**
+   * Legacy PFAPI metadata file name written by v16.x clients.
+   * Its presence on a provider (without sync-data.json) signals a version mismatch
+   * where the old client is still writing and the new client must not silently diverge.
+   */
+  LEGACY_META_FILE: '__meta_',
 } as const;

@@ -1,5 +1,6 @@
 import { IValidation } from 'typia';
 import { OpLog } from '../../../core/log';
+import { FILE_BASED_SYNC_CONSTANTS } from '../../sync-providers/file-based/file-based-sync.types';
 
 /**
  * Extracts a meaningful error message from various error shapes.
@@ -368,7 +369,38 @@ export class CompressError extends AdditionalLogErrorBase {
 
 export class DecompressError extends AdditionalLogErrorBase {
   override name = 'DecompressError';
+
+  constructor(...additional: unknown[]) {
+    super(...additional);
+    this.message = buildDecompressErrorMessage(this.message);
+  }
 }
+
+/**
+ * Translates opaque browser DecompressionStream errors (e.g. WHATWG's
+ * "compressed Input was truncated") into actionable recovery guidance.
+ * Truncation of the remote sync file is unrecoverable from the client — the
+ * user must delete the corrupt file on the remote before sync can recover.
+ *
+ * NOTE: rawMessage here has already passed through extractErrorMessage, which
+ * rewrites zlib Z_* codes to "compression error: <code>" (spaces, not
+ * underscores), so this heuristic matches the post-normalization form.
+ */
+const buildDecompressErrorMessage = (rawMessage: string): string => {
+  const lower = rawMessage.toLowerCase();
+  const looksTruncated =
+    lower.includes('truncat') ||
+    lower.includes('unexpected end') ||
+    lower.includes('buf error');
+  if (looksTruncated) {
+    return (
+      `Remote sync file appears corrupted (compressed data is truncated). ` +
+      `To recover, delete the ${FILE_BASED_SYNC_CONSTANTS.SYNC_FILE} file on ` +
+      `your sync server, then trigger a sync from the device with your latest data.`
+    );
+  }
+  return `Failed to decompress sync data: ${rawMessage}`;
+};
 
 export class JsonParseError extends Error {
   override name = 'JsonParseError';
@@ -562,5 +594,40 @@ export class StorageQuotaExceededError extends Error {
 
   constructor() {
     super('Operation log storage quota exceeded');
+  }
+}
+
+/**
+ * Thrown when sync data is incompatible with the expected format version.
+ * This can occur when the remote file was written by a different (older or newer)
+ * version of the app. Force-uploading is unsafe in this case because the remote
+ * may be in a newer format.
+ */
+export class SyncDataCorruptedError extends Error {
+  override name = 'SyncDataCorruptedError';
+
+  constructor(
+    message: string,
+    public readonly filePath: string,
+  ) {
+    super(`Sync data incompatible at ${filePath}: ${message}`);
+  }
+}
+
+/**
+ * Thrown when the remote sync provider has legacy pfapi files (__meta_) but no
+ * sync-data.json. This means a v16.x client is still writing to the same provider
+ * using the old per-file format. Cross-version sync is not supported — both devices
+ * must run the same app version for sync to work.
+ */
+export class LegacySyncFormatDetectedError extends Error {
+  override name = 'LegacySyncFormatDetectedError';
+
+  constructor() {
+    super(
+      'Sync format mismatch: the remote storage was last written by an older app version ' +
+        '(v16.x or earlier) that uses a different sync format. Please update all your ' +
+        'devices to the same app version so they use the same sync format.',
+    );
   }
 }
